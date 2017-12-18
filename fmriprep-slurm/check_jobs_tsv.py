@@ -46,6 +46,7 @@ def main():
                 break
 
         participant = line_sp[part_start:part_end]
+        participant = [s[4:] if s.startswith('sub-') else s for s in participant]
         jobs.append([dataset, participant, i + 1])
 
     fields = ['ds', 'participant', 'runtime', 'status', 'maxvm',
@@ -57,7 +58,7 @@ def main():
     for job in sorted(jobs):
         results = {
             'ds': job[0],
-            'participant': job[1],
+            'participant': ', '.join(['sub-%s' % s for s in job[1]]),
             'runtime': 'n/a',
             'status': 'n/a',
             'maxvm': 'n/a',
