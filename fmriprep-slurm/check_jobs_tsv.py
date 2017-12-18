@@ -95,7 +95,7 @@ def main():
         results['maxvm'] = 0.0
         results['maxrss'] = 0.0
 
-        with open('%s-%d.out' % (job_id, job[1]), 'r') as olfh:
+        with open('%s-%d.out' % (job_id, job[2]), 'r') as olfh:
             outlog = olfh.readlines()
 
         files = []
@@ -103,7 +103,7 @@ def main():
             line = line.strip().strip('\n')
             if line.startswith('Creating bold processing workflow for '):
                 files.append(line[len(
-                    'Creating bold processing workflow for '):].replace('"', ''))
+                    'Creating bold processing workflow for '):].replace('"', '').split()[0])
 
         trs = [nb.load(f).shape[3] for f in files]
         results['n_bold'] = len(files)
