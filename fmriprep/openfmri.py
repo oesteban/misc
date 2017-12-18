@@ -56,7 +56,6 @@ def get_parser():
 
 def main():
     """Entry point"""
-    thispath = os.getcwd()
     opts = get_parser().parse_args()
     np.random.seed(opts.seed)
 
@@ -64,12 +63,16 @@ def main():
     if opts.output_file is not None:
         out_file = os.path.abspath(opts.output_file)
 
-    os.chdir(opts.openfmri_dir)
-    all_sub = sorted(glob.glob('ds*/sub-*'))
+    openfmri_dir = opts.openfmri_dir
+    if not openfmri_dir.endswith('/'):
+        openfmri_dir = '%s/' % openfmri_dir
+
+    dirnamelen = len(openfmri_dir)
+    all_sub = sorted(glob.glob(os.path.join(openfmri_dir, 'ds*', 'sub-*')))
     datasets = {}
     multises = set()
     for subj in all_sub:
-        ds = subj.split('/')[0]
+        ds = subj[dirnamelen:].split('/')[0]
         single_ses = (os.path.isdir(os.path.join(subj, 'anat')) and
                       os.path.isdir(os.path.join(subj, 'func')) and
                       glob.glob(os.path.join(subj, 'func', '*_bold.nii[.gz]')))
@@ -109,7 +112,6 @@ def main():
     print('Datasets summary:\n\tSingle-session=%d'
           '\n\tMulti-session=%d'
           '\n\tTotal participants=%d' % (len(singleses), len(multises), n_sample))
-    os.chdir(thispath)
 
     if opts.datalad_fetch:
         import datalad.api as dlad
