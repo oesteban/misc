@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-import sys
 import os
+import sys
+
 
 SCRIPT_TEMPLATE = """
 <script>
@@ -131,12 +132,13 @@ def inject_js(in_file, out_file, dataset):
     with open(out_file, 'w') as rfh:
         rfh.write('\n'.join(out_lines))
 
+
 def main():
     """Entry point"""
     opts = get_parser().parse_args()
     inject_js(opts.input_file, opts.output_file, opts.dataset)
     return 0
 
+
 if __name__ == '__main__':
     sys.exit(main())
-

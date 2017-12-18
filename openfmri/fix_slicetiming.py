@@ -9,6 +9,7 @@ import datalad
 
 files = glob('sub-*/func/*_bold.json')
 
+
 def get_parser():
     """Build parser object"""
     from argparse import ArgumentParser
@@ -23,6 +24,7 @@ def get_parser():
                         help='remove SliceTiming field')
     return parser
 
+
 def main():
     """Entry point"""
     opts = get_parser().parse_args()
@@ -36,7 +38,7 @@ def main():
             if not np.any(st < 0.0):
                 sidecar["SliceTiming"] = (st * 1.e-3).tolist()
 
-        # As per Yaric, it is better to just remove the file before writing.
+        # As per Yarik, it is better to just remove the file before writing.
         os.remove(f)
         with open(f, 'w') as fh:
             json.dump(sidecar, fh, indent=4)

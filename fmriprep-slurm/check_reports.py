@@ -2,10 +2,6 @@
 # -*- coding: utf-8 -*-
 import os
 import sys
-import re
-import datetime
-import subprocess as sp
-from textwrap import indent
 
 
 SCRIPT_TEMPLATE = """
@@ -78,6 +74,7 @@ def get_parser():
 
     return parser
 
+
 def inject_js(in_file, out_file, dataset):
     """parse the html and inject code"""
     with open(in_file) as rfh:
@@ -134,17 +131,17 @@ def inject_js(in_file, out_file, dataset):
     with open(out_file, 'w') as rfh:
         rfh.write('\n'.join(out_lines))
 
+
 def main():
     """Entry point"""
     opts = get_parser().parse_args()
 
     with open(opts.tasks_list) as tfh:
         data = tfh.readlines()
-    
+
     part_anchor = data[0].split(' ').index('participant')
     part_start = data[0].split(' ').index('--participant_label') + 1
-    job_id = opts.job_id
-    
+
     jobs = []
     for i, line in enumerate(data):
         line_sp = line.split(' ')
@@ -155,17 +152,16 @@ def main():
             if arg.startswith('--'):
                 part_end += j
                 break
-            
+
         participant = line_sp[part_start:part_end]
         jobs.append([dataset, participant, derivs])
-    
-    last_ds = None
+
     for ds, sub, derivs in sorted(jobs):
         fname = os.path.join(derivs, 'fmriprep', sub[0])
-        
+
         if os.path.isfile('%s.html' % fname):
             inject_js('%s.html' % fname, '%s-rater.html' % fname, ds)
-            
+
     return 0
 
 

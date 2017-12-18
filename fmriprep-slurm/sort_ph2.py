@@ -2,10 +2,7 @@
 # -*- coding: utf-8 -*-
 import os
 import sys
-import re
-import datetime
-import subprocess as sp
-from textwrap import indent
+
 
 def get_parser():
     """Build parser object"""
@@ -22,16 +19,16 @@ def get_parser():
 
     return parser
 
+
 def main():
     """Entry point"""
     opts = get_parser().parse_args()
 
     with open(opts.tasks_list) as tfh:
         data = tfh.readlines()
-    
+
     part_anchor = data[0].split(' ').index('participant')
     part_start = data[0].split(' ').index('--participant_label') + 1
-    jobs = []
     for i, line in enumerate(data):
         line_sp = line.split(' ')
         dataset = line_sp[part_anchor - 2].strip().split('/')[-1]
@@ -41,13 +38,14 @@ def main():
             if arg.startswith('--'):
                 part_end += j
                 break
-            
+
         participant = line_sp[part_start:part_end]
         for p in participant:
             os.symlink(os.path.join(output_dir, 'fmriprep', 'sub-%s.html' % p),
                        os.path.join(opts.archive_dir, '%s_sub-%s.html' % (dataset, p)))
 
     return 0
+
 
 if __name__ == '__main__':
     sys.exit(main())
