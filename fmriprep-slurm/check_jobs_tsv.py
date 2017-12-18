@@ -48,21 +48,23 @@ def main():
         participant = line_sp[part_start:part_end]
         jobs.append([dataset, participant, i + 1])
 
-    results = {
-        'ds': [],
-        'participant': [],
-        'runtime': [],
-        'status': [],
-        'maxvm': [],
-        'maxrss': [],
-        'n_bold': [],
-        'total_tr': [],
-        'avg_tr': [],
-    }
-
+    fields = ['ds', 'participant', 'runtime', 'status', 'maxvm',
+              'maxrss', 'n_bold', 'total_tr', 'avg_tr']
+    outfile = open('%s.tsv' % job_id, 'w')
+    outfile.write('\t'.join(fields))
+    tpl = ('\t'.join(['{%s}' % s for s in fields])).format
     for job in sorted(jobs):
-        results['ds'].append(job[0])
-        results['participant'].append(job[1])
+        results = {
+            'ds': job[0],
+            'participant': job[1],
+            'runtime': 'n/a',
+            'status': 'n/a',
+            'maxvm': 'n/a',
+            'maxrss': 'n/a',
+            'n_bold': 'n/a',
+            'total_tr': 'n/a',
+            'avg_tr': 'n/a',
+        }
 
         # Check job status
         p = sp.run('sacct -o State,Elapsed,MaxVMSize,MaxRSS --noheader -j'.split(' ') + [
@@ -85,11 +87,7 @@ def main():
         results['runtime'] = runtime
 
         if status == 'PENDING':
-            results['maxvm'].append('n/a')
-            results['maxrss'].append('n/a')
-            results['n_bold'].append('n/a')
-            results['total_tr'].append('n/a')
-            results['avg_tr'].append('n/a')
+            outfile.write(tpl(**results))
             continue
 
         results['maxvm'] = 0.0
@@ -105,12 +103,15 @@ def main():
                 files.append(line[len(
                     'Creating bold processing workflow for '):].replace('"', '').split()[0])
 
-        trs = [nb.load(f).shape[3] for f in files]
-        results['n_bold'] = len(files)
-        results['total_tr'].append(int(np.sum(trs)))
-        results['avg_tr'].append(int(np.average(trs)))
+        if files:
+            trs = [nb.load(f).shape[3] for f in files]
+            results['n_bold'] = len(files)
+            results['total_tr'] = int(np.sum(trs))
+            results['avg_tr'] = float(np.average(trs))
 
-    pd.DataFrame(results).to_csv('%s.tsv' % job_id, sep='\t')
+        outfile.write(tpl(**results))
+
+    outfile.close()
     return 0
 
 
