@@ -51,7 +51,8 @@ def main():
     fields = ['ds', 'participant', 'runtime', 'status', 'maxvm',
               'maxrss', 'n_bold', 'total_tr', 'avg_tr']
     outfile = open('%s.tsv' % job_id, 'w')
-    outfile.write('\t'.join(fields))
+    print('\t'.join(fields), file=outfile)
+    outfile.flush()
     tpl = ('\t'.join(['{%s}' % s for s in fields])).format
     for job in sorted(jobs):
         results = {
@@ -87,7 +88,8 @@ def main():
         results['runtime'] = runtime
 
         if status == 'PENDING':
-            outfile.write(tpl(**results))
+            print(tpl(**results), file=outfile)
+            outfile.flush()
             continue
 
         results['maxvm'] = 0.0
@@ -109,7 +111,8 @@ def main():
             results['total_tr'] = int(np.sum(trs))
             results['avg_tr'] = float(np.average(trs))
 
-        outfile.write(tpl(**results))
+        print(tpl(**results), file=outfile)
+        outfile.flush()
 
     outfile.close()
     return 0
