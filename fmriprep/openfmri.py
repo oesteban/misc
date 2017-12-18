@@ -24,7 +24,7 @@ Please run this first: ::
 """
 
 import os
-from sys import maxint
+import sys
 import glob
 import numpy as np
 
@@ -89,7 +89,7 @@ def main():
     subsample = {}
 
     n_sample = 0
-    num_participants = opts.num_participants if opts.num_participants > 0 else maxint
+    num_participants = opts.num_participants if opts.num_participants > 0 else sys.maxsize
     for ds, sublist in datasets.items():
         n_sample += min(num_participants, len(sublist))
         if len(sublist) <= num_participants:
