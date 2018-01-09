@@ -69,15 +69,16 @@ def main():
 
     dirnamelen = len(openfmri_dir)
     all_sub = sorted(glob.glob(os.path.join(openfmri_dir, 'ds*', 'sub-*')))
+  
     datasets = {}
     multises = set()
     for subj in all_sub:
-        ds = subj[dirnamelen:].split('/')[0]
+        ds, sub = subj[dirnamelen:].split('/')[:2]
         single_ses = (os.path.isdir(os.path.join(subj, 'anat')) and
                       os.path.isdir(os.path.join(subj, 'func')) and
-                      glob.glob(os.path.join(subj, 'func', '*_bold.nii[.gz]')))
-        multi_ses = (not single_ses and glob.glob(os.path.join(subj, 'ses-*', 'anat')) and
-                     glob.glob(os.path.join(subj, 'ses-*', 'func', '*_bold.nii[.gz]')))
+                      len(glob.glob(os.path.join(subj, 'func', '*_bold.nii*'))) > 0)
+        multi_ses = (not single_ses and len(glob.glob(os.path.join(subj, 'ses-*', 'anat'))) > 0 and
+                     len(glob.glob(os.path.join(subj, 'ses-*', 'func', '*_bold.nii*'))) > 0)
 
         if single_ses:
             datasets.setdefault(ds, []).append(os.path.basename(subj))

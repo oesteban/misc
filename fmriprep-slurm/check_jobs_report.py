@@ -19,6 +19,8 @@ def get_parser():
                         help='file listing the job-array tasks')
     parser.add_argument('job_id', action='store',
                         help='the job array id')
+    parser.add_argument('-M', '--missing-tasks-list', action='store',
+                        help='write a new tasks_list.sh file with failed tasks')
 
     return parser
 
@@ -45,7 +47,7 @@ def main():
                 break
 
         participant = line_sp[part_start:part_end]
-        jobs.append([dataset, i + 1, participant])
+        jobs.append([dataset, i + 1, participant, line.strip('\n')])
 
     rst_report = 'Job Array Report (job ID %s)' % job_id
     rst_report = '\n%s\n%s\n\n' % (rst_report, '=' * len(rst_report))
@@ -70,6 +72,10 @@ def main():
             if status == 'CANCELLED':
                 out = re.split(r'\s+', stdout[-4].strip())
                 status += ' (%s)' % out[0]
+
+        if status != 'COMPLETED' and opts.missing_tasks_list:
+            with open(opts.missing_tasks_list, 'a') as f:
+                print(job[-1], file=f)
 
         subs = 'Subjects: %s - status %s - runtime %s' % (', '.join(job[2]), status, runtime)
         rst_report += '%s\n%s\n\n' % (subs, '~' * len(subs))
