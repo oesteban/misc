@@ -5,13 +5,13 @@ A BIDS-Apps -like wrapper for FSL feat
 """
 import os
 import sys
-import logger
+import logging
 from pathlib import Path
 from subprocess import run
 import inspect
 import nibabel as nb
 
-LOGGER = logger.getLogger()
+LOGGER = logging.getLogger()
 
 def get_parser():
     """Build parser object"""
@@ -59,16 +59,16 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     data = {
-        'in_bold': str(work_dir / '%s_%s_bold.nii.gz' % (participant_label, task)),
-        'in_t1w': str(work_dir / '%s_T1w.nii.gz' % participant_label),
-        'in_t1w_brain': str(work_dir / '%s_T1w_brain.nii.gz' % participant_label),
+        'in_bold': str(work_dir / '%s_%s_bold.nii.gz') % (participant_label, task),
+        'in_t1w': str(work_dir / '%s_T1w.nii.gz') % participant_label,
+        'in_t1w_brain': str(work_dir / '%s_T1w_brain.nii.gz') % participant_label,
     }
 
     bids_dir = Path(opts.bids_dir)
     try:
         Path(data['in_bold']).symlink_to(
-            bids_dir / participant_label / 'func' / '%s_%s_bold.nii.gz' % (
-                participant_label, task))
+            bids_dir / participant_label / 'func' / ('%s_%s_bold.nii.gz' % (
+                participant_label, task)))
     except OSError:
         pass
 
@@ -79,6 +79,7 @@ def main():
         pass
 
     if not Path(data['in_t1w_brain']).is_file():
+        LOGGER.info('Running FSL BET')
         run(['bet', data['in_t1w'], data['in_t1w_brain'], '-R'], check=True, cwd=str(work_dir))
 
     with Path(Path(inspect.stack()[0][1]).parent / 'template.fsf').open() as f:
@@ -95,6 +96,7 @@ def main():
             in_t1w_brain=data['in_t1w_brain'],
         ))
 
+    LOGGER.info('Running FSL FEAT')
     run(['feat', str(fsf_file)], check=True, cwd=str(work_dir))
     return 0
 
