@@ -74,7 +74,7 @@ def main():
 
     try:
         Path(data['in_t1w']).symlink_to(
-            bids_dir / participant_label / 'anat' / '%s_T1w.nii.gz' % participant_label)
+            bids_dir / participant_label / 'anat' / ('%s_T1w.nii.gz' % participant_label))
     except OSError:
         pass
 
@@ -85,7 +85,7 @@ def main():
     with Path(Path(inspect.stack()[0][1]).parent / 'template.fsf').open() as f:
         tpl = f.read().format
 
-    fsf_file = Path(work_dir / '%s.fsf' % participant_label)
+    fsf_file = Path(work_dir / ('%s.fsf' % participant_label))
     with fsf_file.open('w') as f:
         f.write(tpl(
             output_dir=str(output_dir),
