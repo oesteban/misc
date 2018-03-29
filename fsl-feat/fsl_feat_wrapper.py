@@ -102,7 +102,7 @@ def main():
     run(['feat', str(fsf_file)], check=True, cwd=str(work_dir))
 
     LOGGER.info('Running FSL applywarp')
-    feat_dir = work_dir / ('%s.feat' % participant_label)
+    feat_dir =  Path('%s.feat' % work_dir)
     part_bids = 'sub-%s_task-%s' % (participant_label, task)
     cmd = [
         'applywarp',
