@@ -100,6 +100,21 @@ def main():
 
     LOGGER.info('Running FSL FEAT')
     run(['feat', str(fsf_file)], check=True, cwd=str(work_dir))
+
+    LOGGER.info('Running FSL applywarp')
+    feat_dir = work_dir / ('%s.feat' % participant_label)
+    part_bids = 'sub-%s_task-%s' % (participant_label, task)
+    cmd = [
+        'applywarp',
+        '--in=%s' % str(feat_dir / 'filtered_func_data.nii.gz'),
+        '--ref=%s' % str(feat_dir / 'reg' / 'standard.nii.gz'),
+        '--out=%s' % str(output_dir / (part_bids +
+            '_bold_space-MNI152NLin2009cAsym_preproc.nii.gz')),
+        '--warp=%s' % str(feat_dir / 'reg' / 'example_func2standard_warp.nii.gz'),
+        '--mask=%s' % str(feat_dir / 'reg' / 'standard_mask.nii.gz'),
+    ]
+    run(cmd, check=True, cwd=str(work_dir))
+
     return 0
 
 
