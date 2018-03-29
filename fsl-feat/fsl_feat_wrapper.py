@@ -12,6 +12,7 @@ import inspect
 import nibabel as nb
 
 LOGGER = logging.getLogger()
+LOGGER.setLevel(logging.INFO)
 
 def get_parser():
     """Build parser object"""
@@ -47,13 +48,13 @@ def main():
         task = 'task-%s' % task
 
     # Create work directory
-    work_dir = Path(opts.work_dir)
+    work_dir = Path(opts.work_dir).resolve()
     if opts.participant_label:
         work_dir = work_dir / participant_label
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # Create output directory
-    output_dir = Path(opts.output_dir)
+    output_dir = Path(opts.output_dir).resolve()
     if opts.participant_label:
         output_dir = output_dir / participant_label
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -88,7 +89,7 @@ def main():
     fsf_file = Path(work_dir / ('%s.fsf' % participant_label))
     with fsf_file.open('w') as f:
         f.write(tpl(
-            output_dir=str(output_dir),
+            output_dir=str(work_dir),
             bold_tr=2.0,
             bold_ntr=nb.load(data['in_bold']).shape[-1],
             template_path=opts.template,
