@@ -1,7 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+"""
+A BIDS-Apps -like wrapper for FSL feat
+"""
 import os
 import sys
+from pathlib import Path
 from subprocess import run
 import inspect
 import nibabel as nb
@@ -41,46 +45,46 @@ def main():
         task = 'task-%s' % task
 
     # Create work directory
-    work_dir = os.path.abspath(opts.work_dir)
+    work_dir = Path(opts.work_dir)
     if opts.participant_label:
-        work_dir = os.path.join(work_dir, participant_label)
+        work_dir = work_dir / participant_label
+    work_dir.mkdir(exist_ok=True)
 
     # Create output directory
-    output_dir = os.path.abspath(opts.output_dir)
+    output_dir = Path(opts.output_dir)
     if opts.participant_label:
-        output_dir = os.path.join(output_dir, participant_label)
-
-    os.makedirs(work_dir, exist_ok=True)
-    os.chdir(work_dir)
+        output_dir = output_dir / participant_label
 
     data = {
-        'in_bold': os.path.join(work_dir, '%s_%s_bold.nii.gz' % (participant_label, task)),
-        'in_t1w': os.path.join(work_dir, '%s_T1w.nii.gz' % participant_label),
-        'in_t1w_brain': os.path.join(work_dir, '%s_T1w_brain.nii.gz' % participant_label),
+        'in_bold': str(work_dir / '%s_%s_bold.nii.gz' % (participant_label, task)),
+        'in_t1w': str(work_dir / '%s_T1w.nii.gz' % participant_label),
+        'in_t1w_brain': str(work_dir / '%s_T1w_brain.nii.gz' % participant_label),
     }
 
+    bids_dir = Path(opts.bids_dir)
     try:
-        os.symlink(os.path.join(opts.bids_dir, participant_label, 'func',
-                   '%s_%s_bold.nii.gz' % (participant_label, task)), data['in_bold'])
+        Path(data['in_bold']).symlink_to(
+            bids_dir / participant_label / 'func' / '%s_%s_bold.nii.gz' % (
+                participant_label, task))
     except OSError:
         pass
 
     try:
-        os.symlink(os.path.join(opts.bids_dir, participant_label, 'anat',
-                   '%s_T1w.nii.gz' % participant_label), data['in_t1w'])
+        Path(data['in_t1w']).symlink_to(
+            bids_dir / participant_label / 'anat' / '%s_T1w.nii.gz' % participant_label)
     except OSError:
         pass
 
-    if not os.path.isfile(data['in_t1w_brain']):
-        run(['bet', data['in_t1w'], data['in_t1w_brain'], '-R'], check=True)
+    if not Path(data['in_t1w_brain']).is_file():
+        run(['bet', data['in_t1w'], data['in_t1w_brain'], '-R'], check=True, cwd=str(work_dir))
 
-    with open(os.path.join(os.path.dirname(inspect.stack()[0][1]), 'template.fsf')) as f:
+    with Path(Path(inspect.stack()[0][1]).parent / 'template.fsf').open() as f:
         tpl = f.read().format
 
-    fsf_file = os.path.join(work_dir, '%s.fsf' % participant_label)
-    with open(fsf_file, 'w') as f:
+    fsf_file = Path(work_dir / '%s.fsf' % participant_label)
+    with fsf_file.open('w') as f:
         f.write(tpl(
-            output_dir=output_dir,
+            output_dir=str(output_dir),
             bold_tr=2.0,
             bold_ntr=nb.load(data['in_bold']).shape[-1],
             template_path=opts.template,
@@ -88,11 +92,10 @@ def main():
             in_t1w_brain=data['in_t1w_brain'],
         ))
 
-    run(['feat', fsf_file], check=True)
+    run(['feat', str(fsf_file)], check=True, cwd=str(work_dir))
+    return 0
 
 
 if __name__ == '__main__':
-    cwd = os.getcwd()
     code = main()
-    os.chdir(cwd)
     sys.exit(code)
