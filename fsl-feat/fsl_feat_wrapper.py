@@ -5,11 +5,13 @@ A BIDS-Apps -like wrapper for FSL feat
 """
 import os
 import sys
+import logger
 from pathlib import Path
 from subprocess import run
 import inspect
 import nibabel as nb
 
+LOGGER = logger.getLogger()
 
 def get_parser():
     """Build parser object"""
@@ -48,12 +50,13 @@ def main():
     work_dir = Path(opts.work_dir)
     if opts.participant_label:
         work_dir = work_dir / participant_label
-    work_dir.mkdir(exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
 
     # Create output directory
     output_dir = Path(opts.output_dir)
     if opts.participant_label:
         output_dir = output_dir / participant_label
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     data = {
         'in_bold': str(work_dir / '%s_%s_bold.nii.gz' % (participant_label, task)),
