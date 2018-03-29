@@ -80,8 +80,9 @@ def main():
         pass
 
     if not Path(data['in_t1w_brain']).is_file():
-        LOGGER.info('Running FSL BET')
-        run(['bet', data['in_t1w'], data['in_t1w_brain'], '-R'], check=True, cwd=str(work_dir))
+        cmd = ['bet', data['in_t1w'], data['in_t1w_brain'], '-R']
+        LOGGER.info('Running FSL BET: %s', ' '.join(cmd))
+        run(cmd, check=True, cwd=str(work_dir))
 
     with Path(Path(inspect.stack()[0][1]).parent / 'template.fsf').open() as f:
         tpl = f.read().format
