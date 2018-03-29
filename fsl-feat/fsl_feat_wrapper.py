@@ -5,11 +5,14 @@ A BIDS-Apps -like wrapper for FSL feat
 """
 import os
 import sys
+import shutil
 import logging
 from pathlib import Path
 from subprocess import run
 import inspect
 import nibabel as nb
+import numpy as np
+import pandas as pd
 
 LOGGER = logging.getLogger()
 LOGGER.setLevel(logging.INFO)
@@ -57,7 +60,8 @@ def main():
     output_dir = Path(opts.output_dir).resolve()
     if opts.participant_label:
         output_dir = output_dir / participant_label
-    output_dir.mkdir(parents=True, exist_ok=True)
+
+    part_bids = '_'.join((participant_label, task))
 
     data = {
         'in_bold': str(work_dir / '%s_%s_bold.nii.gz') % (participant_label, task),
@@ -101,20 +105,34 @@ def main():
     LOGGER.info('Running FSL FEAT')
     run(['feat', str(fsf_file)], check=True, cwd=str(work_dir))
 
-    LOGGER.info('Running FSL applywarp')
     feat_dir =  Path('%s.feat' % work_dir)
-    part_bids = 'sub-%s_task-%s' % (participant_label, task)
+    Path(output_dir / 'func').mkdir(parents=True, exist_ok=True)
+    # Copy mask and create confounds file
+    shutil.copy(
+        str(feat_dir / 'reg' / 'standard_mask.nii.gz'),
+        str(output_dir / 'func' / ''.join((
+            part_bids, '_bold_space-MNI152NLin2009cAsym_brainmask.nii.gz')))
+    )
+
+    mvpar = pd.DataFrame(
+        np.loadtxt(str(feat_dir / 'mc' / 'prefiltered_func_data_mcf.par'))
+    )
+    mvpar.columns = ['X', 'Y', 'Z', 'RotX', 'RotY', 'RotZ']
+    mvpar.to_csv(
+        str(output_dir / 'func' / ''.join((part_bids, '_bold_confounds.tsv'))),
+        index=False, sep='\t')
+
+    LOGGER.info('Running FSL applywarp')
     cmd = [
         'applywarp',
         '--in=%s' % str(feat_dir / 'filtered_func_data.nii.gz'),
         '--ref=%s' % str(feat_dir / 'reg' / 'standard.nii.gz'),
-        '--out=%s' % str(output_dir / (part_bids +
-            '_bold_space-MNI152NLin2009cAsym_preproc.nii.gz')),
+        '--out=%s' % str(output_dir / 'func' / ''.join((
+            part_bids, '_bold_space-MNI152NLin2009cAsym_preproc.nii.gz'))),
         '--warp=%s' % str(feat_dir / 'reg' / 'example_func2standard_warp.nii.gz'),
         '--mask=%s' % str(feat_dir / 'reg' / 'standard_mask.nii.gz'),
     ]
     run(cmd, check=True, cwd=str(work_dir))
-
     return 0
 
 
