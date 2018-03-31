@@ -290,9 +290,9 @@ def main():
             (merge, acm, [('out', 'in_files')]),
         ])
 
-        print('Workflow built, start running ...')
-        wf.run('MultiProc')
-        return 0
+    print('Workflow built, start running ...')
+    wf.run('MultiProc')
+    return 0
 
 
 if __name__ == '__main__':
