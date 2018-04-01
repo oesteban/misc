@@ -12,6 +12,7 @@ from pathlib import Path
 # from warnings import warn
 from nipype.pipeline import engine as pe
 from nipype.interfaces import utility as niu
+from nipype.interfaces import io as nio
 from nipype.interfaces import fsl
 from nipype.algorithms.modelgen import SpecifyModel
 from nipype.interfaces import afni
@@ -69,7 +70,8 @@ def first_level_wf(pipeline, subject_id, task_id, output_dir):
     conf2movpar = pe.Node(niu.Function(function=_confounds2movpar),
                           name='conf2movpar')
     masker = pe.Node(fsl.ApplyMask(), name='masker')
-    bim = pe.Node(afni.BlurInMask(fwhm=5.0, outputtype='NIFTI_GZ'), name='bim')
+    bim = pe.Node(afni.BlurInMask(fwhm=5.0, outputtype='NIFTI_GZ'),
+                  name='bim', mem_gb=12)
 
     ev = pe.Node(EventsFilesForTask(task=task_id), name='events')
 
@@ -86,7 +88,7 @@ def first_level_wf(pipeline, subject_id, task_id, output_dir):
         model_serial_correlations=True), name='l1design')
 
     l1featmodel = pe.Node(fsl.FEATModel(), name='l1model')
-    l1estimate = pe.Node(fsl.FEAT(), name='l1estimate')
+    l1estimate = pe.Node(fsl.FEAT(), name='l1estimate', mem_gb=32)
 
     pre_smooth = pe.Node(fsl.SmoothEstimate(), name='smooth_pre')
     post_smooth = pe.Node(fsl.SmoothEstimate(), name='smooth_post')
@@ -251,13 +253,14 @@ def main():
         raise NotImplementedError
         tasks = ['*']
 
-    for task_id, pipeline in product(tasks, ['fslfeat', 'fmriprep']):
-        # Build up big workflow
-        wf = pe.Workflow(name='_'.join(('level1', pipeline, task_id)))
-        wf.base_dir = str(work_dir)
+    # Build up big workflow
+    wf = pe.Workflow(name='level1')
+    wf.base_dir = str(work_dir)
 
+    for task_id, pipeline in product(tasks, ['fslfeat', 'fmriprep']):
         inputnode = pe.Node(niu.IdentityInterface(
-            fields=['contrasts']), name='inputnode')
+            fields=['contrasts']),
+            name='_'.join(('inputnode', pipeline, task_id)))
         inputnode.inputs.contrasts = create_contrasts(task_id)
 
         merge = pe.Node(niu.Merge(len(subjects_list)),
@@ -286,8 +289,12 @@ def main():
             ])
 
         acm = pe.Node(ACM(), name='_'.join(('acm', pipeline, task_id)))
+        ds = pe.Node(nio.DataSink(
+            base_directory=str(output_dir)),
+            name='_'.join(('ds', 'acm', pipeline, task_id)))
         wf.connect([
             (merge, acm, [('out', 'in_files')]),
+            (acm, ds, [('out_file', 'acm.@%s_%s' % (pipeline, task_id))]),
         ])
 
     print('Workflow built, start running ...')
