@@ -130,10 +130,22 @@ def main():
         tasks = ['*']
 
     # Build up big workflow
-    wf = pe.Workflow(name='level1')
-    wf.base_dir = str(work_dir)
+    if opts.participant_level == 'participant':
+        wf = first_level(subjects_list, tasks, output_dir, bids_dir,
+                         bids_deriv_dir)
+    else:
+        raise NotImplementedError
 
-    for task_id in tasks:
+    wf.base_dir = str(work_dir)
+    print('Workflow built, start running ...')
+    wf.run('MultiProc', plugin_args=plugin_args)
+    return 0
+
+
+def first_level(subjects_list, tasks_list, output_dir,
+                bids_dir, bids_deriv_dir):
+    wf = pe.Workflow(name='level1')
+    for task_id in tasks_list:
         inputnode = pe.Node(niu.IdentityInterface(
             fields=['contrasts']),
             name='_'.join(('inputnode', task_id)))
@@ -187,10 +199,7 @@ def main():
                         (subwf, merge, [
                             ('outputnode.zstat', 'in%d' % (i + 1))]),
                     ])
-
-    print('Workflow built, start running ...')
-    wf.run('MultiProc', plugin_args=plugin_args)
-    return 0
+    return wf
 
 
 if __name__ == '__main__':

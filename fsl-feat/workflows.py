@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from pathlib import Path
-
 from nipype.pipeline import engine as pe
 from nipype.interfaces import utility as niu
 from nipype.interfaces import afni
@@ -111,7 +109,7 @@ def first_level_wf(pipeline, subject_id, task_id, output_dir):
     ds_stats.inputs.task_id = task_id
     ds_stats.inputs.variant = pipeline
     ds_stats.inputs.out_path = output_dir
-    ds_stats.interface.always_run = True
+    setattr(ds_stats.interface, '_always_run', True)
 
     workflow.connect([
         (outputnode, csv, [('sigma_pre', 'smooth_pre'),
@@ -123,11 +121,11 @@ def first_level_wf(pipeline, subject_id, task_id, output_dir):
 
 
 def _feat_stats(feat_dir, subject_id, task_id, variant, out_path):
-    from pathlib import Path  # noqa
+    from pathlib import Path
     from shutil import copy
 
     out_names = []
-    dest = out_path / 'func' / 'sub-{}'.format(subject_id) / \
+    dest = out_path / 'sub-{}'.format(subject_id) / 'func' / \
         'sub-{}_task-{}_variant-{}_%s'.format(subject_id, task_id, variant)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
