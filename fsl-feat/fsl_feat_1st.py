@@ -7,18 +7,13 @@ import os
 import sys
 from pathlib import Path
 
-
 # from warnings import warn
 from nipype.pipeline import engine as pe
 from nipype.interfaces import utility as niu
 from nipype.interfaces import io as nio
-from nipype.interfaces import fsl
-from nipype.algorithms.modelgen import SpecifyModel
-from nipype.interfaces import afni
-from nipype.algorithms.misc import AddCSVRow
 from nipype.algorithms.stats import ACM
 
-from .interfaces import EventsFilesForTask
+from .workflows import first_level_wf
 
 CNP_SUBJECT_BLACKLIST = set([
     '10428', '10501', '70035', '70036', '11121', '10299', '10971',  # no anat
@@ -47,149 +42,6 @@ def get_parser():
     parser.add_argument('--mem-gb', action='store', type=int, help='RAM in GB')
     parser.add_argument('--nprocs', action='store', type=int, help='number of processors')
     return parser
-
-
-def first_level_wf(pipeline, subject_id, task_id, output_dir):
-    """
-    First level workflow
-    """
-    workflow = pe.Workflow(name='_'.join((pipeline, subject_id, task_id)))
-
-    inputnode = pe.Node(niu.IdentityInterface(
-        fields=['bold_preproc', 'contrasts', 'confounds', 'brainmask', 'events_file']),
-        name='inputnode')
-
-    outputnode = pe.Node(niu.IdentityInterface(
-        fields=['sigma_pre', 'sigma_post', 'zstat']), name='outputnode')
-
-    conf2movpar = pe.Node(niu.Function(function=_confounds2movpar),
-                          name='conf2movpar')
-    masker = pe.Node(fsl.ApplyMask(), name='masker')
-    bim = pe.Node(afni.BlurInMask(fwhm=5.0, outputtype='NIFTI_GZ'),
-                  name='bim', mem_gb=20)
-
-    ev = pe.Node(EventsFilesForTask(task=task_id), name='events')
-
-    l1 = pe.Node(SpecifyModel(
-        input_units='secs',
-        time_repetition=2,
-        high_pass_filter_cutoff=100,
-        parameter_source='FSL',
-    ), name='l1')
-
-    l1model = pe.Node(fsl.Level1Design(
-        interscan_interval=2,
-        bases={'dgamma': {'derivs': True}},
-        model_serial_correlations=True), name='l1design')
-
-    l1featmodel = pe.Node(fsl.FEATModel(), name='l1model')
-    l1estimate = pe.Node(fsl.FEAT(), name='l1estimate', mem_gb=40)
-
-    # pre_smooth = pe.Node(afni.FWHMx(combine=True, detrend=True),
-    #                      name='smooth_pre')
-    # post_smooth = pe.Node(afni.FWHMx(combine=True, detrend=True),
-    #                       name='smooth_post')
-
-    pre_smooth = pe.Node(fsl.SmoothEstimate(),
-                         name='smooth_pre', mem_gb=20)
-    post_smooth = pe.Node(fsl.SmoothEstimate(),
-                          name='smooth_post', mem_gb=20)
-
-    def _resels(val):
-        return val ** (1 / 3.)
-
-    # def _fwhm(fwhm):
-    #     from numpy import mean
-    #     return float(mean(fwhm, dtype=float))
-
-    workflow.connect([
-        (inputnode, masker, [('bold_preproc', 'in_file'),
-                             ('brainmask', 'mask_file')]),
-        (inputnode, ev, [('events_file', 'in_file')]),
-        (inputnode, l1model, [('contrasts', 'contrasts')]),
-        (inputnode, conf2movpar, [('confounds', 'in_confounds')]),
-        (inputnode, bim, [('brainmask', 'mask')]),
-        (masker, bim, [('out_file', 'in_file')]),
-        (bim, l1, [('out_file', 'functional_runs')]),
-        (ev, l1, [('event_files', 'event_files')]),
-        (conf2movpar, l1, [('out', 'realignment_parameters')]),
-        (l1, l1model, [('session_info', 'session_info')]),
-        (ev, l1model, [('orthogonalization', 'orthogonalization')]),
-        (l1model, l1featmodel, [
-            ('fsf_files', 'fsf_file'),
-            ('ev_files', 'ev_files')]),
-        (l1model, l1estimate, [('fsf_files', 'fsf_file')]),
-        # Smooth
-        (inputnode, pre_smooth, [('bold_preproc', 'zstat_file'),
-                                 ('brainmask', 'mask_file')]),
-        (bim, post_smooth, [('out_file', 'zstat_file')]),
-        (inputnode, post_smooth, [('brainmask', 'mask_file')]),
-        (pre_smooth, outputnode, [(('resels', _resels), 'sigma_pre')]),
-        (post_smooth, outputnode, [(('resels', _resels), 'sigma_post')]),
-
-        # Smooth with AFNI
-        # (inputnode, pre_smooth, [('bold_preproc', 'in_file'),
-        #                          ('brainmask', 'mask')]),
-        # (bim, post_smooth, [('out_file', 'in_file')]),
-        # (inputnode, post_smooth, [('brainmask', 'mask')]),
-        # (pre_smooth, outputnode, [(('fwhm', _fwhm), 'sigma_pre')]),
-        # (post_smooth, outputnode, [(('fwhm', _fwhm), 'sigma_post')]),
-    ])
-
-    # Writing outputs
-    csv = pe.Node(AddCSVRow(in_file=str(output_dir / 'smoothness.csv')),
-                  name='addcsv_%s_%s' % (subject_id, pipeline))
-    csv.inputs.sub_id = subject_id
-    csv.inputs.pipeline = pipeline
-
-    # Datasinks
-    out_subject = Path(output_dir / 'sub-{}'.format(subject_id) / 'func')
-    out_subject.mkdir(parents=True, exist_ok=True)
-    ds_zstat = pe.Node(niu.Function(function=_feat_file),
-                       name='ds_zstat')
-    ds_zstat.inputs.path = 'stats/zstat11.nii.gz'
-    ds_zstat.inputs.dest = out_subject / 'sub-{}_task-{}_variant-{}_zstat11.nii.gz'.format(
-        subject_id, task_id, pipeline)
-
-    ds_tstat = pe.Node(niu.Function(function=_feat_file),
-                       name='ds_tstat')
-    ds_tstat.inputs.path = 'stats/tstat11.nii.gz'
-    ds_tstat.inputs.dest = out_subject / 'sub-{}_task-{}_variant-{}_tstat11.nii.gz'.format(
-        subject_id, task_id, pipeline)
-
-    workflow.connect([
-        (outputnode, csv, [('sigma_pre', 'smooth_pre'),
-                           ('sigma_post', 'smooth_post')]),
-        (l1estimate, ds_zstat, [('feat_dir', 'feat_dir')]),
-        (l1estimate, ds_tstat, [('feat_dir', 'feat_dir')]),
-        (ds_zstat, outputnode, [('out', 'zstat')]),
-    ])
-    return workflow
-
-
-def _feat_file(feat_dir, path, dest):
-    from pathlib import Path
-    from shutil import copy
-    path = Path(feat_dir) / path
-    if path.is_file():
-        copy(str(path), str(dest))
-        return str(dest)
-
-    raise RuntimeError('feat file not found')
-
-
-def _confounds2movpar(in_confounds):
-    from os.path import abspath
-    import numpy as np
-    import pandas as pd
-    dataframe = pd.read_csv(
-        in_confounds,
-        sep='\t',
-        usecols=['X', 'Y', 'Z', 'RotX', 'RotY', 'RotZ']).fillna(value=0)
-
-    out_name = abspath('motion.par')
-    np.savetxt(out_name, dataframe.values, '%5.3f')
-    return out_name
 
 
 def create_contrasts(task):
