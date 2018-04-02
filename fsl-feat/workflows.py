@@ -120,6 +120,72 @@ def first_level_wf(pipeline, subject_id, task_id, output_dir):
     return workflow
 
 
+def second_level_wf(name='level2'):
+    """second level analysis"""
+    workflow = pe.Workflow(name=name)
+
+    inputnode = pe.Node(niu.IdentityInterface(
+        fields=['copes', 'varcopes', 'group_mask']), name='inputnode')
+
+    copemerge = pe.Node(fsl.Merge(dimension='t'), name='copemerge')
+    varcopemerge = pe.Node(fsl.Merge(dimension='t'), name='varcopemerge')
+    level2model = pe.Node(fsl.L2Model(), name='l2model')
+    flameo = pe.Node(fsl.FLAMEO(run_mode='ols'), name='flameo')
+
+    def _len(inlist):
+        return len(inlist)
+    # create workflow
+    workflow.connect([
+        (inputnode, copemerge, [('copes', 'in_files')]),
+        (inputnode, varcopemerge, [('varcopes', 'in_files')]),
+        (inputnode, level2model, [(('copes', len), 'in_files')]),
+        (inputnode, flameo, [('group_mask', 'mask_file')]),
+        (copemerge, flameo, [('merged_file', 'cope_file')]),
+        (varcopemerge, flameo, [('merged_file', 'var_cope_file')]),
+        (level2model, flameo, [
+            ('design_mat', 'design_file'),
+            ('design_con', 't_con_file'),
+            ('design_grp', 'cov_split_file')]),
+    ])
+
+    # remove unwanted files
+    # resultdir = os.path.join(basedir,'OLS/stats')
+    # destdir = os.path.join(outcopedir,'OLS')
+    # shutil.move(resultdir, destdir)
+
+    # shutil.rmtree(basedir)
+
+    # ##################
+    # ## THRESHOLDING ##
+    # ##################
+
+    # os.chdir(destdir)
+
+    # # FDR
+    # os.popen('fslmaths zstat1 -ztop pstat1').read()
+    # logpcmd = 'fdr -i pstat1 -m mask -q 0.05'
+    # thres = float(os.popen(logpcmd).read().split('\n')[1])
+    # threscmd = 'fslmaths pstat1 -mul -1 -add 1 -thr %f -mas mask thresh_vox_fdr_pstat1'%(1-thres)
+    # os.popen(threscmd).read()
+
+    # #FWE
+    # smoothcmd = 'smoothest -r res4d -d %i -m mask'%(len(featdirs)-1)
+    # smooth = os.popen(smoothcmd).read().split("\n")
+    # smoothn = [x.split(' ')[1] for x in smooth[:-1]]
+    # reselcount = float(smoothn[1])/float(smoothn[2])
+    # fwethrescmd = 'ptoz 0.05 -g %f'%reselcount
+    # fwethres = os.popen(fwethrescmd).read().split("\n")[0]
+    # fwecmd = 'fslmaths zstat1 -thr %s thresh_vox_fwe_zstat1'%fwethres
+    # fwe = os.popen(fwecmd).read()
+
+    # # cluster extent
+    # clustercmd = 'cluster -i zstat1 -c cope1 -t 3.2 -p 0.05 -d %s --volume=%s --othresh=thresh_cluster_fwe_zstat1 --connectivity=26 --mm'%(smoothn[0],smoothn[1])
+    # clusterout = os.popen(clustercmd).read()
+    # f1=open('thres_cluster_fwe_table.txt','w+')
+    # f1.write(clusterout)
+    return workflow
+
+
 def _feat_stats(feat_dir, subject_id, task_id, variant, out_path):
     from pathlib import Path
     from shutil import copy
@@ -129,7 +195,7 @@ def _feat_stats(feat_dir, subject_id, task_id, variant, out_path):
         'sub-{}_task-{}_variant-{}_%s'.format(subject_id, task_id, variant)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
-    for statfile in (Path(feat_dir) / 'stats').glob('*.nii.gz'):
+    for statfile in Path(Path(feat_dir) / 'stats').glob('*.nii.gz'):
         out_names.append(str(dest) % statfile.name)
         copy(str(statfile), out_names[-1])
     return sorted(out_names)

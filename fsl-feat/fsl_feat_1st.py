@@ -6,6 +6,7 @@ First-level analysis of the CNP dataset
 import os
 import sys
 from pathlib import Path
+from itertools import product
 
 # from warnings import warn
 from nipype.pipeline import engine as pe
@@ -13,7 +14,7 @@ from nipype.interfaces import utility as niu
 from nipype.interfaces import io as nio
 from nipype.algorithms.stats import ACM
 
-from .workflows import first_level_wf
+from .workflows import first_level_wf, second_level_wf
 
 CNP_SUBJECT_BLACKLIST = set([
     '10428', '10501', '70035', '70036', '11121', '10299', '10971',  # no anat
@@ -201,6 +202,43 @@ def first_level(subjects_list, tasks_list, output_dir,
                     ])
     return wf
 
+
+def second_level(subjects_list, tasks_list, output_dir, contrast_id,
+                 sample_size=None, seed=12345):
+    import numpy as np
+    if not sample_size:
+        raise RuntimeError
+
+    if sample_size * 2 > len(subjects_list):
+        raise RuntimeError('Sample size too big')
+
+    np.random.seed(seed * sample_size)
+    full_sample = np.random.choice(subjects_list, sample_size * 2,
+                                   replace=False)
+    groups = [full_sample[:sample_size].tolist(),
+              full_sample[sample_size:].tolist()]
+
+    wf = pe.Workflow(name='level2')
+    inputnode = pe.Node(niu.IdentityInterface(fields=['group_mask']),
+                        name='inputnode')
+
+    for pipeline, task_id, group in product(groups, tasks_list, ['fmriprep', 'fslfeat']):
+        group_pattern = [
+            str(output_dir / 'sub-{}'.format(s) / 'func' /
+                'sub-{}_task-{}_variant-{}_%s{d}.nii.gz'.format(s, task_id, pipeline, contrast_id))
+            for s in group
+        ]
+        subwf = second_level_wf(
+            name='_'.join(('level2', pipeline, task_id,
+                          '%03d' % sample_size, '%d' % group)))
+        subwf.inputs.inputnode.copes = [pat % 'cope' for pat in group_pattern]
+        subwf.inputs.inputnode.varcopes = [pat % 'varcope' for pat in group_pattern]
+
+        wf.connect([
+            (inputnode, subwf, [('group_mask', 'inputnode.group_mask')]),
+        ])
+
+    return wf
 
 if __name__ == '__main__':
     code = main()
