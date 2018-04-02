@@ -135,12 +135,22 @@ def main():
         wf = first_level(subjects_list, tasks, output_dir, bids_dir,
                          bids_deriv_dir)
     else:
-        raise NotImplementedError
+        start = 5
+        wf = pe.Workflow('level2')
+        for ss in _arange(start, len(subjects_list) // 2, 5)[:1]:
+            swf = second_level(subjects_list, tasks, output_dir, 11,
+                               sample_size=ss)
+            wf.add_nodes(swf)
 
     wf.base_dir = str(work_dir)
     print('Workflow built, start running ...')
     wf.run('MultiProc', plugin_args=plugin_args)
     return 0
+
+
+def _arange(start, end, increment):
+    from numpy import arange
+    return (arange, end, increment).tolist()
 
 
 def first_level(subjects_list, tasks_list, output_dir,
@@ -204,7 +214,7 @@ def first_level(subjects_list, tasks_list, output_dir,
 
 
 def second_level(subjects_list, tasks_list, output_dir, contrast_id,
-                 sample_size=None, seed=12345):
+                 bids_deriv_dir, sample_size=None, seed=12345):
     import numpy as np
     if not sample_size:
         raise RuntimeError
@@ -219,9 +229,6 @@ def second_level(subjects_list, tasks_list, output_dir, contrast_id,
               full_sample[sample_size:].tolist()]
 
     wf = pe.Workflow(name='level2')
-    inputnode = pe.Node(niu.IdentityInterface(fields=['group_mask']),
-                        name='inputnode')
-
     for pipeline, task_id, group in product(groups, tasks_list, ['fmriprep', 'fslfeat']):
         group_pattern = [
             str(output_dir / 'sub-{}'.format(s) / 'func' /
@@ -234,11 +241,18 @@ def second_level(subjects_list, tasks_list, output_dir, contrast_id,
         subwf.inputs.inputnode.copes = [pat % 'cope' for pat in group_pattern]
         subwf.inputs.inputnode.varcopes = [pat % 'varcope' for pat in group_pattern]
 
-        wf.connect([
-            (inputnode, subwf, [('group_mask', 'inputnode.group_mask')]),
-        ])
+        # Connect brain mask
+        if pipeline == 'fslfeat':
+            subwf.inputs.inputnode.group_mask = str(
+                Path.home() / '.cache' / 'stanford-crn' /
+                'mni_icbm152_nlin_asym_09c' / '2mm_brainmask.nii.gz')
+        else:
+            subwf.inputs.inputnode.group_mask = str(
+                bids_deriv_dir / 'fmriprep' / 'mni_resampled_brainmask.nii.gz'
+            )
 
     return wf
+
 
 if __name__ == '__main__':
     code = main()
