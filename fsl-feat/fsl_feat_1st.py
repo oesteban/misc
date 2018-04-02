@@ -5,9 +5,8 @@ First-level analysis of the CNP dataset
 """
 import os
 import sys
-import shutil
-from itertools import product
 from pathlib import Path
+
 
 # from warnings import warn
 from nipype.pipeline import engine as pe
@@ -19,7 +18,7 @@ from nipype.interfaces import afni
 from nipype.algorithms.misc import AddCSVRow
 from nipype.algorithms.stats import ACM
 
-from .interfaces import EventsFilesForTask, FixHeaderApplyTransforms as ApplyTransforms
+from .interfaces import EventsFilesForTask
 
 CNP_SUBJECT_BLACKLIST = set([
     '10428', '10501', '70035', '70036', '11121', '10299', '10971',  # no anat
@@ -45,6 +44,8 @@ def get_parser():
                         default=os.path.join(os.getcwd(), 'work'))
     parser.add_argument('-B', '--bids-dir', action='store')
     parser.add_argument('--task', action='store', nargs='+', help='select task')
+    parser.add_argument('--mem-gb', action='store', type=int, help='RAM in GB')
+    parser.add_argument('--nprocs', action='store', type=int, help='number of processors')
     return parser
 
 
@@ -61,17 +62,11 @@ def first_level_wf(pipeline, subject_id, task_id, output_dir):
     outputnode = pe.Node(niu.IdentityInterface(
         fields=['sigma_pre', 'sigma_post', 'zstat']), name='outputnode')
 
-    mnimask = pe.Node(ApplyTransforms(
-        input_image=str(Path.home() / '.cache' / 'stanford-crn' /
-                        'mni_icbm152_nlin_asym_09c' / '1mm_brainmask.nii.gz'),
-        interpolation='MultiLabel', float=True, transforms='identity'),
-        name='mnimask')
-
     conf2movpar = pe.Node(niu.Function(function=_confounds2movpar),
                           name='conf2movpar')
     masker = pe.Node(fsl.ApplyMask(), name='masker')
     bim = pe.Node(afni.BlurInMask(fwhm=5.0, outputtype='NIFTI_GZ'),
-                  name='bim', mem_gb=12)
+                  name='bim', mem_gb=20)
 
     ev = pe.Node(EventsFilesForTask(task=task_id), name='events')
 
@@ -88,22 +83,32 @@ def first_level_wf(pipeline, subject_id, task_id, output_dir):
         model_serial_correlations=True), name='l1design')
 
     l1featmodel = pe.Node(fsl.FEATModel(), name='l1model')
-    l1estimate = pe.Node(fsl.FEAT(), name='l1estimate', mem_gb=32)
+    l1estimate = pe.Node(fsl.FEAT(), name='l1estimate', mem_gb=40)
 
-    pre_smooth = pe.Node(fsl.SmoothEstimate(), name='smooth_pre')
-    post_smooth = pe.Node(fsl.SmoothEstimate(), name='smooth_post')
+    # pre_smooth = pe.Node(afni.FWHMx(combine=True, detrend=True),
+    #                      name='smooth_pre')
+    # post_smooth = pe.Node(afni.FWHMx(combine=True, detrend=True),
+    #                       name='smooth_post')
+
+    pre_smooth = pe.Node(fsl.SmoothEstimate(),
+                         name='smooth_pre', mem_gb=20)
+    post_smooth = pe.Node(fsl.SmoothEstimate(),
+                          name='smooth_post', mem_gb=20)
 
     def _resels(val):
         return val ** (1 / 3.)
 
+    # def _fwhm(fwhm):
+    #     from numpy import mean
+    #     return float(mean(fwhm, dtype=float))
+
     workflow.connect([
-        (inputnode, mnimask, [('brainmask', 'reference_image')]),
-        (inputnode, masker, [('bold_preproc', 'in_file')]),
+        (inputnode, masker, [('bold_preproc', 'in_file'),
+                             ('brainmask', 'mask_file')]),
         (inputnode, ev, [('events_file', 'in_file')]),
         (inputnode, l1model, [('contrasts', 'contrasts')]),
         (inputnode, conf2movpar, [('confounds', 'in_confounds')]),
-        (mnimask, masker, [('output_image', 'mask_file')]),
-        (mnimask, bim, [('output_image', 'mask')]),
+        (inputnode, bim, [('brainmask', 'mask')]),
         (masker, bim, [('out_file', 'in_file')]),
         (bim, l1, [('out_file', 'functional_runs')]),
         (ev, l1, [('event_files', 'event_files')]),
@@ -121,6 +126,14 @@ def first_level_wf(pipeline, subject_id, task_id, output_dir):
         (inputnode, post_smooth, [('brainmask', 'mask_file')]),
         (pre_smooth, outputnode, [(('resels', _resels), 'sigma_pre')]),
         (post_smooth, outputnode, [(('resels', _resels), 'sigma_post')]),
+
+        # Smooth with AFNI
+        # (inputnode, pre_smooth, [('bold_preproc', 'in_file'),
+        #                          ('brainmask', 'mask')]),
+        # (bim, post_smooth, [('out_file', 'in_file')]),
+        # (inputnode, post_smooth, [('brainmask', 'mask')]),
+        # (pre_smooth, outputnode, [(('fwhm', _fwhm), 'sigma_pre')]),
+        # (post_smooth, outputnode, [(('fwhm', _fwhm), 'sigma_post')]),
     ])
 
     # Writing outputs
@@ -211,7 +224,18 @@ def create_contrasts(task):
 
 def main():
     """Entry point"""
+    from multiprocessing import set_start_method
+    set_start_method('forkserver')
+
     opts = get_parser().parse_args()
+
+    plugin_args = {
+        'raise_insufficient': False,
+        'memory_gb': opts.mem_gb,
+        'n_procs': opts.nprocs
+    }
+    plugin_args = {k: v for k, v in plugin_args.items()
+                   if v is not None}
 
     # Data dir
     bids_deriv_dir = Path(opts.bids_deriv_dir)
@@ -257,48 +281,63 @@ def main():
     wf = pe.Workflow(name='level1')
     wf.base_dir = str(work_dir)
 
-    for task_id, pipeline in product(tasks, ['fslfeat', 'fmriprep']):
+    for task_id in tasks:
         inputnode = pe.Node(niu.IdentityInterface(
             fields=['contrasts']),
-            name='_'.join(('inputnode', pipeline, task_id)))
+            name='_'.join(('inputnode', task_id)))
         inputnode.inputs.contrasts = create_contrasts(task_id)
 
-        merge = pe.Node(niu.Merge(len(subjects_list)),
-                        name='_'.join(('merge', pipeline, task_id)))
+        # Run pipelines
+        for pipeline in ['fslfeat', 'fmriprep']:
+            nsubjects = len(subjects_list)
+            if nsubjects > 1:
+                merge = pe.Node(niu.Merge(nsubjects),
+                                name='_'.join(('merge', pipeline, task_id)))
+                acm = pe.Node(ACM(), name='_'.join(('acm', pipeline, task_id)))
+                ds = pe.Node(nio.DataSink(
+                    base_directory=str(output_dir)),
+                    name='_'.join(('ds', 'acm', pipeline, task_id)))
+                wf.connect([
+                    (merge, acm, [('out', 'in_files')]),
+                    (acm, ds, [('out_file', 'acm.@%s_%s' % (pipeline, task_id))]),
+                ])
 
-        for i, sub_id in enumerate(subjects_list):
-            # build new workflow
-            subwf = first_level_wf(pipeline, sub_id, task_id, output_dir)
-            ftpl = str(
-                bids_deriv_dir / pipeline / 'sub-{}'.format(sub_id) / 'func' /
-                'sub-{}_task-{}_%s'.format(sub_id, task_id))
-            subwf.inputs.inputnode.bold_preproc = ftpl % \
-                'bold_space-MNI152NLin2009cAsym_preproc.nii.gz'
-            subwf.inputs.inputnode.confounds = ftpl % 'bold_confounds.tsv'
-            subwf.inputs.inputnode.brainmask = ftpl % \
-                'bold_space-MNI152NLin2009cAsym_brainmask.nii.gz'
-            subwf.inputs.inputnode.events_file = str(
-                bids_dir / 'sub-{}'.format(sub_id) / 'func' /
-                'sub-{}_task-{}_events.tsv'.format(sub_id, task_id))
+            for i, sub_id in enumerate(subjects_list):
+                # build new workflow
+                subwf = first_level_wf(pipeline, sub_id, task_id, output_dir)
+                ftpl = str(
+                    bids_deriv_dir / pipeline / 'sub-{}'.format(sub_id) / 'func' /
+                    'sub-{}_task-{}_%s'.format(sub_id, task_id))
+                subwf.inputs.inputnode.bold_preproc = ftpl % \
+                    'bold_space-MNI152NLin2009cAsym_preproc.nii.gz'
+                subwf.inputs.inputnode.confounds = ftpl % 'bold_confounds.tsv'
+                subwf.inputs.inputnode.events_file = str(
+                    bids_dir / 'sub-{}'.format(sub_id) / 'func' /
+                    'sub-{}_task-{}_events.tsv'.format(sub_id, task_id))
 
-            wf.connect([
-                (inputnode, subwf, [
-                    ('contrasts', 'inputnode.contrasts')]),
-                (subwf, merge, [
-                    ('outputnode.zstat', 'in%d' % (i + 1))]),
-            ])
+                wf.connect([
+                    (inputnode, subwf, [
+                        ('contrasts', 'inputnode.contrasts')]),
+                ])
 
-        acm = pe.Node(ACM(), name='_'.join(('acm', pipeline, task_id)))
-        ds = pe.Node(nio.DataSink(
-            base_directory=str(output_dir)),
-            name='_'.join(('ds', 'acm', pipeline, task_id)))
-        wf.connect([
-            (merge, acm, [('out', 'in_files')]),
-            (acm, ds, [('out_file', 'acm.@%s_%s' % (pipeline, task_id))]),
-        ])
+                # Connect brain mask
+                if pipeline == 'fslfeat':
+                    subwf.inputs.inputnode.brainmask = ftpl % \
+                        'bold_space-MNI152NLin2009cAsym_brainmask.nii.gz'
+                else:
+                    subwf.inputs.inputnode.brainmask = str(
+                        bids_deriv_dir / 'fmriprep' / 'mni_resampled_brainmask.nii.gz'
+                    )
+
+                # Connect merger
+                if nsubjects > 1:
+                    wf.connect([
+                        (subwf, merge, [
+                            ('outputnode.zstat', 'in%d' % (i + 1))]),
+                    ])
 
     print('Workflow built, start running ...')
-    wf.run('MultiProc')
+    wf.run('MultiProc', plugin_args=plugin_args)
     return 0
 
 

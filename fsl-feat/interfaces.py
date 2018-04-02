@@ -107,7 +107,7 @@ def create_ev(dataframe, out_dir, out_name, duration=1, amplitude=1):
         Full path to the new events file
     """
     dataframe = dataframe[dataframe.onset.notnull()]
-    dataframe.onsets = dataframe.onset.round(3)
+    dataframe.onset = dataframe.onset.round(3)
 
     if isinstance(duration, (float, int)):
         dataframe['duration'] = [duration] * len(dataframe)
