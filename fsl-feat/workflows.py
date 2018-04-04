@@ -6,7 +6,7 @@ from nipype.interfaces import afni
 from nipype.interfaces import fsl
 from nipype.algorithms.modelgen import SpecifyModel
 from nipype.algorithms.misc import AddCSVRow
-from .interfaces import EventsFilesForTask
+from .interfaces import EventsFilesForTask, FDR, PtoZ
 
 
 def first_level_wf(pipeline, subject_id, task_id, output_dir):
@@ -127,18 +127,55 @@ def second_level_wf(name='level2'):
     inputnode = pe.Node(niu.IdentityInterface(
         fields=['copes', 'varcopes', 'group_mask']), name='inputnode')
 
+    outputnode = pe.Node(niu.IdentityInterface(
+        fields=['zstat', 'tstat', 'pstat', 'fwe_thres', 'fdr_thres']),
+        name='outputnode')
+
     copemerge = pe.Node(fsl.Merge(dimension='t'), name='copemerge')
     varcopemerge = pe.Node(fsl.Merge(dimension='t'), name='varcopemerge')
     level2model = pe.Node(fsl.L2Model(), name='l2model')
     flameo = pe.Node(fsl.FLAMEO(run_mode='ols'), name='flameo')
+    ztopval = pe.Node(fsl.ImageMaths(op_string='-ztop', suffix='_pval'),
+                      name='ztop')
+
+    # FDR
+    fdr = pe.Node(FDR(), name='calc_fdr')
+    fdr_apply = pe.Node(fsl.ImageMaths(
+        suffix='_thresh_vox_fdr_pstat1'), name='fdr_apply')
+
+    # FWE
+    def _reselcount(voxels, resels):
+        return float(voxels / resels)
+
+    smoothness = pe.Node(fsl.SmoothEstimate(), name='smoothness')
+    rescount = pe.Node(niu.Function(function=_reselcount), name='reselcount')
+    ptoz = pe.Node(PtoZ(), name='ptoz')
+    fwethres = pe.Node(fsl.Threshold(), name='fwethres')
+
+    # Cluster
+    cluster = pe.Node(fsl.Cluster(
+        threshold=3.2, pthreshold=0.05, connectivity=26, use_mm=True),
+        name='cluster')
 
     def _len(inlist):
         return len(inlist)
+
+    def _lastidx(inlist):
+        return len(inlist) - 1
+
+    def _first(inlist):
+        if isinstance(inlist, (list, tuple)):
+            return inlist[0]
+        return inlist
+
+    def _fdr_thres_operator(fdr_th):
+        return '-mul -1 -add 1 -thr %f' % (1 - fdr_th)
+
     # create workflow
     workflow.connect([
         (inputnode, copemerge, [('copes', 'in_files')]),
         (inputnode, varcopemerge, [('varcopes', 'in_files')]),
-        (inputnode, level2model, [(('copes', len), 'in_files')]),
+        (inputnode, level2model, [(('copes', _len), 'num_copes')]),
         (inputnode, flameo, [('group_mask', 'mask_file')]),
         (copemerge, flameo, [('merged_file', 'cope_file')]),
         (varcopemerge, flameo, [('merged_file', 'var_cope_file')]),
@@ -146,43 +183,33 @@ def second_level_wf(name='level2'):
             ('design_mat', 'design_file'),
             ('design_con', 't_con_file'),
             ('design_grp', 'cov_split_file')]),
+        (flameo, ztopval, [(('zstats', _first), 'in_file')]),
+        (ztopval, fdr, [('out_file', 'in_file')]),
+        (inputnode, fdr, [('group_mask', 'in_mask')]),
+        (inputnode, fdr_apply, [('group_mask', 'mask_file')]),
+        (flameo, fdr_apply, [(('zstats', _first), 'in_file')]),
+        (fdr, fdr_apply, [
+            (('fdr_val', _fdr_thres_operator), 'op_string')]),
+        (inputnode, smoothness, [('group_mask', 'mask_file')]),
+        (flameo, smoothness, [(('res4d', _first), 'residual_fit_file')]),
+        (inputnode, smoothness, [(('copes', _lastidx), 'dof')]),
+        (smoothness, rescount, [('resels', 'resels'),
+                                ('volume', 'voxels')]),
+        (rescount, ptoz, [('out', 'resels')]),
+        (flameo, fwethres, [(('zstats', _first), 'in_file')]),
+        (ptoz, fwethres, [('z_val', 'thresh')]),
+        (flameo, cluster, [(('zstats', _first), 'in_file'),
+                           (('copes', _first), 'cope_file')]),
+        (smoothness, cluster, [('dlh', 'dlh'),
+                               ('volume', 'volume')]),
+        (flameo, outputnode, [
+            (('zstats', _first), 'zstat'),
+            (('tstats', _first), 'tstat'),
+        ]),
+        (ztopval, outputnode, [('out_file', 'pstat')]),
+        (fdr_apply, outputnode, [('out_file', 'fdr_thres')]),
+        (fwethres, outputnode, [('out_file', 'fwe_thres')]),
     ])
-
-    # remove unwanted files
-    # resultdir = os.path.join(basedir,'OLS/stats')
-    # destdir = os.path.join(outcopedir,'OLS')
-    # shutil.move(resultdir, destdir)
-
-    # shutil.rmtree(basedir)
-
-    # ##################
-    # ## THRESHOLDING ##
-    # ##################
-
-    # os.chdir(destdir)
-
-    # # FDR
-    # os.popen('fslmaths zstat1 -ztop pstat1').read()
-    # logpcmd = 'fdr -i pstat1 -m mask -q 0.05'
-    # thres = float(os.popen(logpcmd).read().split('\n')[1])
-    # threscmd = 'fslmaths pstat1 -mul -1 -add 1 -thr %f -mas mask thresh_vox_fdr_pstat1'%(1-thres)
-    # os.popen(threscmd).read()
-
-    # #FWE
-    # smoothcmd = 'smoothest -r res4d -d %i -m mask'%(len(featdirs)-1)
-    # smooth = os.popen(smoothcmd).read().split("\n")
-    # smoothn = [x.split(' ')[1] for x in smooth[:-1]]
-    # reselcount = float(smoothn[1])/float(smoothn[2])
-    # fwethrescmd = 'ptoz 0.05 -g %f'%reselcount
-    # fwethres = os.popen(fwethrescmd).read().split("\n")[0]
-    # fwecmd = 'fslmaths zstat1 -thr %s thresh_vox_fwe_zstat1'%fwethres
-    # fwe = os.popen(fwecmd).read()
-
-    # # cluster extent
-    # clustercmd = 'cluster -i zstat1 -c cope1 -t 3.2 -p 0.05 -d %s --volume=%s --othresh=thresh_cluster_fwe_zstat1 --connectivity=26 --mm'%(smoothn[0],smoothn[1])
-    # clusterout = os.popen(clustercmd).read()
-    # f1=open('thres_cluster_fwe_table.txt','w+')
-    # f1.write(clusterout)
     return workflow
 
 

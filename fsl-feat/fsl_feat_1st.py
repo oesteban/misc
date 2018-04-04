@@ -6,15 +6,21 @@ First-level analysis of the CNP dataset
 import os
 import sys
 from pathlib import Path
-from itertools import product
+import warnings
 
 # from warnings import warn
 from nipype.pipeline import engine as pe
 from nipype.interfaces import utility as niu
 from nipype.interfaces import io as nio
 from nipype.algorithms.stats import ACM
+from nipype.algorithms.metrics import FuzzyOverlap
 
 from .workflows import first_level_wf, second_level_wf
+from .interfaces import Correlation
+from nipype.algorithms.misc import AddCSVRow
+
+
+warnings.simplefilter("once")
 
 CNP_SUBJECT_BLACKLIST = set([
     '10428', '10501', '70035', '70036', '11121', '10299', '10971',  # no anat
@@ -42,6 +48,8 @@ def get_parser():
     parser.add_argument('--task', action='store', nargs='+', help='select task')
     parser.add_argument('--mem-gb', action='store', type=int, help='RAM in GB')
     parser.add_argument('--nprocs', action='store', type=int, help='number of processors')
+    parser.add_argument('--repetition', action='store', type=int, default=1,
+                        help='repetition number')
     return parser
 
 
@@ -135,12 +143,14 @@ def main():
         wf = first_level(subjects_list, tasks, output_dir, bids_dir,
                          bids_deriv_dir)
     else:
-        start = 5
+        start = 10
         wf = pe.Workflow('level2')
-        for ss in _arange(start, len(subjects_list) // 2, 5)[:1]:
+        groupsizes = _arange(start, len(subjects_list) // 2, 5)
+        for ss in groupsizes:
             swf = second_level(subjects_list, tasks, output_dir, 11,
-                               sample_size=ss)
-            wf.add_nodes(swf)
+                               bids_deriv_dir, sample_size=ss,
+                               repetition=opts.repetition)
+            wf.add_nodes([swf])
 
     wf.base_dir = str(work_dir)
     print('Workflow built, start running ...')
@@ -150,7 +160,7 @@ def main():
 
 def _arange(start, end, increment):
     from numpy import arange
-    return (arange, end, increment).tolist()
+    return arange(start, end, increment).tolist()
 
 
 def first_level(subjects_list, tasks_list, output_dir,
@@ -214,7 +224,7 @@ def first_level(subjects_list, tasks_list, output_dir,
 
 
 def second_level(subjects_list, tasks_list, output_dir, contrast_id,
-                 bids_deriv_dir, sample_size=None, seed=12345):
+                 bids_deriv_dir, sample_size=None, repetition=1):
     import numpy as np
     if not sample_size:
         raise RuntimeError
@@ -222,36 +232,95 @@ def second_level(subjects_list, tasks_list, output_dir, contrast_id,
     if sample_size * 2 > len(subjects_list):
         raise RuntimeError('Sample size too big')
 
-    np.random.seed(seed * sample_size)
-    full_sample = np.random.choice(subjects_list, sample_size * 2,
+    np.random.seed(np.uint32(12345 * (repetition + 1) * sample_size))
+    full_sample = np.random.choice(sorted(subjects_list), sample_size * 2,
                                    replace=False)
-    groups = [full_sample[:sample_size].tolist(),
-              full_sample[sample_size:].tolist()]
+    groups = [sorted(full_sample[:sample_size].tolist()),
+              sorted(full_sample[sample_size:].tolist())]
 
-    wf = pe.Workflow(name='level2')
-    for pipeline, task_id, group in product(groups, tasks_list, ['fmriprep', 'fslfeat']):
-        group_pattern = [
-            str(output_dir / 'sub-{}'.format(s) / 'func' /
-                'sub-{}_task-{}_variant-{}_%s{d}.nii.gz'.format(s, task_id, pipeline, contrast_id))
-            for s in group
-        ]
-        subwf = second_level_wf(
-            name='_'.join(('level2', pipeline, task_id,
-                          '%03d' % sample_size, '%d' % group)))
-        subwf.inputs.inputnode.copes = [pat % 'cope' for pat in group_pattern]
-        subwf.inputs.inputnode.varcopes = [pat % 'varcope' for pat in group_pattern]
+    group_output = output_dir.parent / 'l2'
+    group_output.mkdir(parents=True, exist_ok=True)
 
-        # Connect brain mask
-        if pipeline == 'fslfeat':
-            subwf.inputs.inputnode.group_mask = str(
-                Path.home() / '.cache' / 'stanford-crn' /
-                'mni_icbm152_nlin_asym_09c' / '2mm_brainmask.nii.gz')
-        else:
-            subwf.inputs.inputnode.group_mask = str(
-                bids_deriv_dir / 'fmriprep' / 'mni_resampled_brainmask.nii.gz'
-            )
+    wf = pe.Workflow(name='level2_N%03d' % sample_size)
+    for task_id in tasks_list:
+        for pipeline in ['fmriprep', 'fslfeat']:
+            fdice = pe.Node(FuzzyOverlap(weighting='volume'),
+                            name='_'.join(('fuzzy_dice', task_id, pipeline)))
+            bdice = pe.Node(FuzzyOverlap(weighting='volume'),
+                            name='_'.join(('binary_dice', task_id, pipeline)))
+
+            corr = pe.Node(Correlation(),
+                           name='_'.join(('corr', task_id, pipeline)))
+            # dcorr = pe.Node(Correlation(metric='distance', subsample=1.),
+            #                 mem_gb=60, name='_'.join(('dcorr', task_id, pipeline)))
+
+            tocsv = pe.Node(AddCSVRow(
+                in_file=str(group_output / 'group.csv')),
+                name='_'.join(('tcsv', task_id, pipeline)),
+                mem_gb=64)
+            tocsv.inputs.pipeline = pipeline
+            tocsv.inputs.N = sample_size
+            tocsv.inputs.repetition = repetition
+
+            for gid, group in enumerate(groups):
+                group_pattern = [
+                    str(output_dir / 'sub-{}'.format(s) / 'func' /
+                        'sub-{}_task-{}_variant-{}_%s{:d}.nii.gz'.format(
+                            s, task_id, pipeline, contrast_id))
+                    for s in group
+                ]
+                subwf = second_level_wf(
+                    name='_'.join((pipeline, task_id, 'N%03d' % sample_size, 'S%d' % gid)))
+                subwf.inputs.inputnode.copes = [pat % 'cope' for pat in group_pattern]
+                subwf.inputs.inputnode.varcopes = [pat % 'varcope' for pat in group_pattern]
+
+                ds = pe.Node(nio.DataSink(base_directory=str(group_output)),
+                             name='_'.join(('ds', task_id, pipeline, 'N%d' % sample_size,
+                                            'G%d' % gid)))
+                dsfmt = ('%s_%s_N%03d_R%03d_S%d.@{}' % (
+                         pipeline, task_id, sample_size, repetition, gid)).format
+
+                # Connect brain mask
+                if pipeline == 'fslfeat':
+                    group_mask = str(
+                        Path.home() / '.cache' / 'stanford-crn' /
+                        'mni_icbm152_nlin_asym_09c' / '2mm_brainmask.nii.gz')
+                else:
+                    group_mask = str(
+                        bids_deriv_dir / 'fmriprep' / 'mni_resampled_brainmask.nii.gz'
+                    )
+                subwf.inputs.inputnode.group_mask = group_mask
+                corr.inputs.in_mask = group_mask
+                wf.connect([
+                    (subwf, fdice, [
+                        (('outputnode.pstat', _tolist), 'in_ref' * gid or 'in_tst')]),
+                    (subwf, bdice, [
+                        (('outputnode.fdr_thres', _tolist), 'in_ref' * gid or 'in_tst')]),
+                    (subwf, corr, [
+                        ('outputnode.tstat', 'in_file%d' % (gid + 1))]),
+                    # (subwf, dcorr, [
+                    #     ('outputnode.tstat', 'in_file%d' % (gid + 1))]),
+                    (subwf, ds, [
+                        ('outputnode.pstat', dsfmt('pstat')),
+                        ('outputnode.tstat', dsfmt('tstat')),
+                        ('outputnode.zstat', dsfmt('zstat')),
+                        ('outputnode.fdr_thres', dsfmt('fdr_thres')),
+                        ('outputnode.fwe_thres', dsfmt('fwe_thres')),
+                    ])
+                ])
+
+            wf.connect([
+                (fdice, tocsv, [('dice', 'fdice')]),
+                (bdice, tocsv, [('dice', 'bdice')]),
+                (corr, tocsv, [('out_corr', 'correlation')]),
+                # (dcorr, tocsv, [('out_corr', 'corrdist')]),
+            ])
 
     return wf
+
+
+def _tolist(inval):
+    return [inval]
 
 
 if __name__ == '__main__':
