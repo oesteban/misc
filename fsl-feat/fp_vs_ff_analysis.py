@@ -199,20 +199,23 @@ def first_level(subjects_list, tasks_list, output_dir,
                 subwf.inputs.inputnode.events_file = str(
                     bids_dir / 'sub-{}'.format(sub_id) / 'func' /
                     'sub-{}_task-{}_events.tsv'.format(sub_id, task_id))
+                subwf.inputs.inputnode.brainmask = ftpl % \
+                    'bold_space-MNI152NLin2009cAsym_brainmask.nii.gz'
+
 
                 wf.connect([
                     (inputnode, subwf, [
                         ('contrasts', 'inputnode.contrasts')]),
                 ])
 
-                # Connect brain mask
-                if pipeline == 'fslfeat':
-                    subwf.inputs.inputnode.brainmask = ftpl % \
-                        'bold_space-MNI152NLin2009cAsym_brainmask.nii.gz'
-                else:
-                    subwf.inputs.inputnode.brainmask = str(
-                        bids_deriv_dir / 'fmriprep' / 'mni_resampled_brainmask.nii.gz'
-                    )
+                # # Connect brain mask
+                # if pipeline == 'fslfeat':
+                #     subwf.inputs.inputnode.brainmask = ftpl % \
+                #         'bold_space-MNI152NLin2009cAsym_brainmask.nii.gz'
+                # else:
+                #     subwf.inputs.inputnode.brainmask = str(
+                #         bids_deriv_dir / 'fmriprep' / 'mni_resampled_brainmask.nii.gz'
+                #     )
 
                 # Connect merger
                 if nsubjects > 1:
@@ -279,16 +282,19 @@ def second_level(subjects_list, tasks_list, output_dir, contrast_id,
                                             'G%d' % gid)))
                 dsfmt = ('%s_%s_N%03d_R%03d_S%d.@{}' % (
                          pipeline, task_id, sample_size, repetition, gid)).format
+                group_mask = str(
+                    Path.home() / '.cache' / 'stanford-crn' /
+                    'mni_icbm152_nlin_asym_09c' / '2mm_brainmask.nii.gz')
 
-                # Connect brain mask
-                if pipeline == 'fslfeat':
-                    group_mask = str(
-                        Path.home() / '.cache' / 'stanford-crn' /
-                        'mni_icbm152_nlin_asym_09c' / '2mm_brainmask.nii.gz')
-                else:
-                    group_mask = str(
-                        bids_deriv_dir / 'fmriprep' / 'mni_resampled_brainmask.nii.gz'
-                    )
+                # # Connect brain mask
+                # if pipeline == 'fslfeat':
+                #     group_mask = str(
+                #         Path.home() / '.cache' / 'stanford-crn' /
+                #         'mni_icbm152_nlin_asym_09c' / '2mm_brainmask.nii.gz')
+                # else:
+                #     group_mask = str(
+                #         bids_deriv_dir / 'fmriprep' / 'mni_resampled_brainmask.nii.gz'
+                #     )
                 subwf.inputs.inputnode.group_mask = group_mask
                 corr.inputs.in_mask = group_mask
                 wf.connect([
