@@ -118,7 +118,7 @@ class Correlation(SimpleInterface):
         mask = np.ones_like(im1, dtype=bool)
         if isdefined(self.inputs.in_mask):
             mask = nb.load(
-                self.inputs.in_mask).get_data().astype(bool)
+                self.inputs.in_mask).get_data() > 0.0
 
         if self.inputs.metric == 'pearson':
             corr = float(pearsonr(im1[mask], im2[mask])[0])

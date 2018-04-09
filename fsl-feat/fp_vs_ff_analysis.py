@@ -23,8 +23,12 @@ from nipype.algorithms.misc import AddCSVRow
 warnings.simplefilter("once")
 
 CNP_SUBJECT_BLACKLIST = set([
-    '10428', '10501', '70035', '70036', '11121', '10299', '10971',  # no anat
-    '50010', '10527',  # incomplete conditions
+    '10299', '10428', '10501', '10971', '11121', '70035', '70036',  # no anat
+    '10527', '50010',  # incomplete conditions
+])
+
+CNP_MISSING_STOPSIGNAL = set([
+    '10193', '10696', '10948', '11082', '70002', '70010'
 ])
 
 
@@ -127,6 +131,7 @@ def main():
         subjects_list += list(set(fslsubj).intersection(fprsubj))
 
     subjects_list = list(set(subjects_list) - CNP_SUBJECT_BLACKLIST)
+    subjects_list = list(set(subjects_list) - CNP_MISSING_STOPSIGNAL)
 
     if not subjects_list:
         raise RuntimeError('No subjects selected')
@@ -202,7 +207,6 @@ def first_level(subjects_list, tasks_list, output_dir,
                 subwf.inputs.inputnode.brainmask = ftpl % \
                     'bold_space-MNI152NLin2009cAsym_brainmask.nii.gz'
 
-
                 wf.connect([
                     (inputnode, subwf, [
                         ('contrasts', 'inputnode.contrasts')]),
@@ -244,15 +248,18 @@ def second_level(subjects_list, tasks_list, output_dir, contrast_id,
     group_output = output_dir.parent / 'l2'
     group_output.mkdir(parents=True, exist_ok=True)
 
+    group_mask = str(Path.home() / '.cache' / 'stanford-crn' /
+                     'mni_icbm152_nlin_asym_09c' / '2mm_brainmask.nii.gz')
+
     wf = pe.Workflow(name='level2_N%03d' % sample_size)
     for task_id in tasks_list:
         for pipeline in ['fmriprep', 'fslfeat']:
-            fdice = pe.Node(FuzzyOverlap(weighting='volume'),
+            fdice = pe.Node(FuzzyOverlap(in_mask=group_mask),
                             name='_'.join(('fuzzy_dice', task_id, pipeline)))
-            bdice = pe.Node(FuzzyOverlap(weighting='volume'),
+            bdice = pe.Node(FuzzyOverlap(in_mask=group_mask),
                             name='_'.join(('binary_dice', task_id, pipeline)))
 
-            corr = pe.Node(Correlation(),
+            corr = pe.Node(Correlation(in_mask=group_mask),
                            name='_'.join(('corr', task_id, pipeline)))
             # dcorr = pe.Node(Correlation(metric='distance', subsample=1.),
             #                 mem_gb=60, name='_'.join(('dcorr', task_id, pipeline)))
@@ -282,9 +289,6 @@ def second_level(subjects_list, tasks_list, output_dir, contrast_id,
                                             'G%d' % gid)))
                 dsfmt = ('%s_%s_N%03d_R%03d_S%d.@{}' % (
                          pipeline, task_id, sample_size, repetition, gid)).format
-                group_mask = str(
-                    Path.home() / '.cache' / 'stanford-crn' /
-                    'mni_icbm152_nlin_asym_09c' / '2mm_brainmask.nii.gz')
 
                 # # Connect brain mask
                 # if pipeline == 'fslfeat':
