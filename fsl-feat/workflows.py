@@ -45,10 +45,12 @@ def first_level_wf(pipeline, subject_id, task_id, output_dir):
     l1featmodel = pe.Node(fsl.FEATModel(), name='l1model')
     l1estimate = pe.Node(fsl.FEAT(), name='l1estimate', mem_gb=40)
 
-    # pre_smooth = pe.Node(afni.FWHMx(combine=True, detrend=True),
-    #                      name='smooth_pre')
-    # post_smooth = pe.Node(afni.FWHMx(combine=True, detrend=True),
-    #                       name='smooth_post')
+    pre_smooth_afni = pe.Node(afni.FWHMx(
+        combine=True, detrend=True, args='-ShowMeClassicFWHM'),
+        name='smooth_pre_afni', mem_gb=20)
+    post_smooth_afni = pe.Node(afni.FWHMx(
+        combine=True, detrend=True, args='-ShowMeClassicFWHM'),
+        name='smooth_post_afni', mem_gb=20)
 
     pre_smooth = pe.Node(fsl.SmoothEstimate(),
                          name='smooth_pre', mem_gb=20)
@@ -58,9 +60,9 @@ def first_level_wf(pipeline, subject_id, task_id, output_dir):
     def _resels(val):
         return val ** (1 / 3.)
 
-    # def _fwhm(fwhm):
-    #     from numpy import mean
-    #     return float(mean(fwhm, dtype=float))
+    def _fwhm(fwhm):
+        from numpy import mean
+        return float(mean(fwhm, dtype=float))
 
     workflow.connect([
         (inputnode, masker, [('bold_preproc', 'in_file'),
@@ -88,12 +90,10 @@ def first_level_wf(pipeline, subject_id, task_id, output_dir):
         (post_smooth, outputnode, [(('resels', _resels), 'sigma_post')]),
 
         # Smooth with AFNI
-        # (inputnode, pre_smooth, [('bold_preproc', 'in_file'),
-        #                          ('brainmask', 'mask')]),
-        # (bim, post_smooth, [('out_file', 'in_file')]),
-        # (inputnode, post_smooth, [('brainmask', 'mask')]),
-        # (pre_smooth, outputnode, [(('fwhm', _fwhm), 'sigma_pre')]),
-        # (post_smooth, outputnode, [(('fwhm', _fwhm), 'sigma_post')]),
+        (inputnode, pre_smooth_afni, [('bold_preproc', 'in_file'),
+                                      ('brainmask', 'mask')]),
+        (bim, post_smooth_afni, [('out_file', 'in_file')]),
+        (inputnode, post_smooth_afni, [('brainmask', 'mask')]),
     ])
 
     # Writing outputs
@@ -114,26 +114,28 @@ def first_level_wf(pipeline, subject_id, task_id, output_dir):
     workflow.connect([
         (outputnode, csv, [('sigma_pre', 'smooth_pre'),
                            ('sigma_post', 'smooth_post')]),
+        (pre_smooth_afni, csv, [(('fwhm', _fwhm), 'fwhm_pre')]),
+        (post_smooth_afni, csv, [(('fwhm', _fwhm), 'fwhm_post')]),
         (l1estimate, ds_stats, [('feat_dir', 'feat_dir')]),
         (ds_stats, outputnode, [('out', 'out_stats')]),
     ])
     return workflow
 
 
-def second_level_wf(name='level2'):
+def second_level_wf(name):
     """second level analysis"""
     workflow = pe.Workflow(name=name)
 
     inputnode = pe.Node(niu.IdentityInterface(
-        fields=['copes', 'varcopes', 'group_mask']), name='inputnode')
+        fields=['copes', 'varcopes', 'group_mask', 'design_mat',
+                'design_con', 'design_grp']), name='inputnode')
 
     outputnode = pe.Node(niu.IdentityInterface(
         fields=['zstat', 'tstat', 'pstat', 'fwe_thres', 'fdr_thres']),
         name='outputnode')
 
-    copemerge = pe.Node(fsl.Merge(dimension='t'), name='copemerge')
-    varcopemerge = pe.Node(fsl.Merge(dimension='t'), name='varcopemerge')
-    level2model = pe.Node(fsl.L2Model(), name='l2model')
+    copemerge = pe.Node(fsl.Merge(dimension='t'), name='copemerge', mem_gb=40)
+    varcopemerge = pe.Node(fsl.Merge(dimension='t'), name='varcopemerge', mem_gb=40)
     flameo = pe.Node(fsl.FLAMEO(run_mode='ols'), name='flameo')
     ztopval = pe.Node(fsl.ImageMaths(op_string='-ztop', suffix='_pval'),
                       name='ztop')
@@ -173,16 +175,15 @@ def second_level_wf(name='level2'):
 
     # create workflow
     workflow.connect([
-        (inputnode, copemerge, [('copes', 'in_files')]),
-        (inputnode, varcopemerge, [('varcopes', 'in_files')]),
-        (inputnode, level2model, [(('copes', _len), 'num_copes')]),
-        (inputnode, flameo, [('group_mask', 'mask_file')]),
-        (copemerge, flameo, [('merged_file', 'cope_file')]),
-        (varcopemerge, flameo, [('merged_file', 'var_cope_file')]),
-        (level2model, flameo, [
+        (inputnode, flameo, [
             ('design_mat', 'design_file'),
             ('design_con', 't_con_file'),
             ('design_grp', 'cov_split_file')]),
+        (inputnode, copemerge, [('copes', 'in_files')]),
+        (inputnode, varcopemerge, [('varcopes', 'in_files')]),
+        (inputnode, flameo, [('group_mask', 'mask_file')]),
+        (copemerge, flameo, [('merged_file', 'cope_file')]),
+        (varcopemerge, flameo, [('merged_file', 'var_cope_file')]),
         (flameo, ztopval, [(('zstats', _first), 'in_file')]),
         (ztopval, fdr, [('out_file', 'in_file')]),
         (inputnode, fdr, [('group_mask', 'in_mask')]),

@@ -12,7 +12,8 @@ import warnings
 from nipype.pipeline import engine as pe
 from nipype.interfaces import utility as niu
 from nipype.interfaces import io as nio
-from nipype.algorithms.stats import ACM
+from nipype.interfaces import fsl
+from nipype.algorithms.stats import ActivationCount as ACM
 from nipype.algorithms.metrics import FuzzyOverlap
 
 from .workflows import first_level_wf, second_level_wf
@@ -20,7 +21,8 @@ from .interfaces import Correlation
 from nipype.algorithms.misc import AddCSVRow
 
 
-warnings.simplefilter("once")
+warnings.simplefilter("once", FutureWarning)
+warnings.simplefilter("once", DeprecationWarning)
 
 CNP_SUBJECT_BLACKLIST = set([
     '10299', '10428', '10501', '10971', '11121', '70035', '70036',  # no anat
@@ -151,7 +153,10 @@ def main():
         start = 10
         wf = pe.Workflow('level2')
         groupsizes = _arange(start, len(subjects_list) // 2, 5)
+        group_output = output_dir / 'l2'
+        group_output.mkdir(parents=True, exist_ok=True)
         for ss in groupsizes:
+            print('Building workflow for N=%d' % ss)
             swf = second_level(subjects_list, tasks, output_dir, 11,
                                bids_deriv_dir, sample_size=ss,
                                repetition=opts.repetition)
@@ -170,6 +175,9 @@ def _arange(start, end, increment):
 
 def first_level(subjects_list, tasks_list, output_dir,
                 bids_dir, bids_deriv_dir):
+    group_mask = ('/oak/stanford/groups/russpold/data/templates/'
+                  'mni_icbm152_nlin_asym_09c/2mm_brainmask.nii.gz')
+
     wf = pe.Workflow(name='level1')
     for task_id in tasks_list:
         inputnode = pe.Node(niu.IdentityInterface(
@@ -204,22 +212,12 @@ def first_level(subjects_list, tasks_list, output_dir,
                 subwf.inputs.inputnode.events_file = str(
                     bids_dir / 'sub-{}'.format(sub_id) / 'func' /
                     'sub-{}_task-{}_events.tsv'.format(sub_id, task_id))
-                subwf.inputs.inputnode.brainmask = ftpl % \
-                    'bold_space-MNI152NLin2009cAsym_brainmask.nii.gz'
+                subwf.inputs.inputnode.brainmask = group_mask
 
                 wf.connect([
                     (inputnode, subwf, [
                         ('contrasts', 'inputnode.contrasts')]),
                 ])
-
-                # # Connect brain mask
-                # if pipeline == 'fslfeat':
-                #     subwf.inputs.inputnode.brainmask = ftpl % \
-                #         'bold_space-MNI152NLin2009cAsym_brainmask.nii.gz'
-                # else:
-                #     subwf.inputs.inputnode.brainmask = str(
-                #         bids_deriv_dir / 'fmriprep' / 'mni_resampled_brainmask.nii.gz'
-                #     )
 
                 # Connect merger
                 if nsubjects > 1:
@@ -245,13 +243,17 @@ def second_level(subjects_list, tasks_list, output_dir, contrast_id,
     groups = [sorted(full_sample[:sample_size].tolist()),
               sorted(full_sample[sample_size:].tolist())]
 
-    group_output = output_dir.parent / 'l2'
-    group_output.mkdir(parents=True, exist_ok=True)
+    print("Sampled groups (N=%d, repetition %d):" % (sample_size, repetition))
+    print("Group 0: %s" % ' '.join(groups[0]))
+    print("Group 1: %s" % ' '.join(groups[1]))
 
-    group_mask = str(Path.home() / '.cache' / 'stanford-crn' /
-                     'mni_icbm152_nlin_asym_09c' / '2mm_brainmask.nii.gz')
+    group_output = output_dir / 'l2'
+    group_mask = ('/oak/stanford/groups/russpold/data/templates/'
+                  'mni_icbm152_nlin_asym_09c/2mm_brainmask.nii.gz')
 
-    wf = pe.Workflow(name='level2_N%03d' % sample_size)
+    wf = pe.Workflow(name='level2_N%03d_R%03d' % (sample_size, repetition))
+    level2model = pe.Node(fsl.L2Model(num_copes=sample_size),
+                          name='l2model')
     for task_id in tasks_list:
         for pipeline in ['fmriprep', 'fslfeat']:
             fdice = pe.Node(FuzzyOverlap(in_mask=group_mask),
@@ -267,7 +269,7 @@ def second_level(subjects_list, tasks_list, output_dir, contrast_id,
             tocsv = pe.Node(AddCSVRow(
                 in_file=str(group_output / 'group.csv')),
                 name='_'.join(('tcsv', task_id, pipeline)),
-                mem_gb=64)
+                run_without_submitting=True)
             tocsv.inputs.pipeline = pipeline
             tocsv.inputs.N = sample_size
             tocsv.inputs.repetition = repetition
@@ -280,7 +282,7 @@ def second_level(subjects_list, tasks_list, output_dir, contrast_id,
                     for s in group
                 ]
                 subwf = second_level_wf(
-                    name='_'.join((pipeline, task_id, 'N%03d' % sample_size, 'S%d' % gid)))
+                    '_'.join((pipeline, task_id, 'N%03d' % sample_size, 'S%d' % gid)))
                 subwf.inputs.inputnode.copes = [pat % 'cope' for pat in group_pattern]
                 subwf.inputs.inputnode.varcopes = [pat % 'varcope' for pat in group_pattern]
 
@@ -290,18 +292,12 @@ def second_level(subjects_list, tasks_list, output_dir, contrast_id,
                 dsfmt = ('%s_%s_N%03d_R%03d_S%d.@{}' % (
                          pipeline, task_id, sample_size, repetition, gid)).format
 
-                # # Connect brain mask
-                # if pipeline == 'fslfeat':
-                #     group_mask = str(
-                #         Path.home() / '.cache' / 'stanford-crn' /
-                #         'mni_icbm152_nlin_asym_09c' / '2mm_brainmask.nii.gz')
-                # else:
-                #     group_mask = str(
-                #         bids_deriv_dir / 'fmriprep' / 'mni_resampled_brainmask.nii.gz'
-                #     )
                 subwf.inputs.inputnode.group_mask = group_mask
                 corr.inputs.in_mask = group_mask
                 wf.connect([
+                    (level2model, subwf, [('design_mat', 'inputnode.design_mat'),
+                                          ('design_con', 'inputnode.design_con'),
+                                          ('design_grp', 'inputnode.design_grp')]),
                     (subwf, fdice, [
                         (('outputnode.pstat', _tolist), 'in_ref' * gid or 'in_tst')]),
                     (subwf, bdice, [
